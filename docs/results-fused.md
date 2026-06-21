@@ -52,6 +52,18 @@ limit for a pure numpy+numba engine.** Closing further needs C/intrinsics — wh
 the transparent-engine thesis. The `w8a8`/VNNI lever is **rejected, with evidence**, so a
 future M-pass doesn't re-burn the spike.
 
+## Declined on evidence: fusing the attention pre-projection
+
+We also built and **validated** a fused attention kernel (input-RMSNorm + stacked QKV +
+per-head QK-RMSNorm + half-split RoPE in one njit call — the #1/#2 parity traps inside
+numba, proven exact: q/k/v `cos = 1.000000`). Measured end-to-end, it was **perf-neutral**:
+full mlp+attn fusion 43.4 tok/s vs mlp-only 42.7 — within run-to-run noise. The reason is
+structural: attention is **cache/compute-bound** (the SDPA over the growing KV, which stays
+fp32 numpy), not weight-bandwidth-bound, and its projections were already fast serial int8.
+Fusing them removes only *dispatch* overhead — a small slice. So a ~40-line QK-norm/RoPE
+njit kernel bought ~0 tok/s for real parity risk and maintenance burden. **Reverted.** The
+MLP is where the weight bytes (and the win) are; the attention stays readable per-op.
+
 ## Thesis note
 
 The fused kernel hides 4 ops in one loop — the *opposite* of the transparent per-op design.
