@@ -38,6 +38,31 @@ def w8a32_gemv(q, scale, x, y):
         y[n] = acc
 
 
+# Below this many weight bytes, prange's thread-launch overhead dominates the tiny
+# work and SERIAL is faster (measured: 1024x1024 int8 GEMV 56us serial vs 127us
+# prange(12)). matmul_int8 routes small int8 matmuls (q/k/v/o, ≤2 MB) to the serial
+# twin and reserves prange for the large/stacked ones (lm_head, fused MLP, gate/up).
+PRANGE_BYTES = 2_500_000
+
+
+@njit(fastmath=True, cache=True)
+def w8a32_gemv_serial(q, scale, x, y):
+    """Serial twin of w8a32_gemv (no prange) for small matmuls. Bit-identical output —
+    each output row is an independent, identical fp32 reduction."""
+    N, K = q.shape
+    ng = scale.shape[1]
+    G = K // ng
+    for n in range(N):
+        acc = np.float32(0.0)
+        for gi in range(ng):
+            gs = np.float32(0.0)
+            base = gi * G
+            for j in range(G):
+                gs += x[base + j] * np.float32(q[n, base + j])
+            acc += gs * scale[n, gi]
+        y[n] = acc
+
+
 @njit(parallel=True, fastmath=True, cache=True)
 def w8a32_gemm(q, scale, X, Y):
     """Prefill GEMM (M>1). q:(N,K) int8; scale:(N,ng) f32; X:(M,K) f32 C-contig; Y:(M,N) f32 out.
@@ -74,7 +99,10 @@ def matmul_int8(q, scale, x):
     N = q.shape[0]
     y = np.empty((M, N), dtype=np.float32)
     if M == 1:
-        w8a32_gemv(q, scale, xm[0], y[0])
+        if q.nbytes < PRANGE_BYTES:           # small -> serial (prange launch dominates)
+            w8a32_gemv_serial(q, scale, xm[0], y[0])
+        else:
+            w8a32_gemv(q, scale, xm[0], y[0])
     else:
         w8a32_gemm(q, scale, xm, y)
     return y.reshape(*lead, N)
@@ -85,4 +113,5 @@ def warmup() -> None:
     q = np.ones((2, 4), dtype=np.int8)
     s = np.ones((2, 1), dtype=np.float32)
     w8a32_gemv(q, s, np.ones(4, np.float32), np.zeros(2, np.float32))
+    w8a32_gemv_serial(q, s, np.ones(4, np.float32), np.zeros(2, np.float32))
     w8a32_gemm(q, s, np.ones((2, 4), np.float32), np.zeros((2, 2), np.float32))

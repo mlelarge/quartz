@@ -67,10 +67,14 @@ def main():
     pids = _encode_prompt(tok, "Tell me about large language models.", GenConfig())
     q_fp32 = time_decode(load_model(path)[0], pids, args.tokens)
     q_hyb = time_decode(load_model(path, quant=QuantConfig())[0], pids, args.tokens)
+    q_fused = time_decode(load_model(path, quant=QuantConfig(default="int8", fused=True))[0],
+                          pids, args.tokens)
+    q_best = max(q_hyb, q_fused)
 
     print(f"\n{'engine / config':<34}{'tok/s':>8}{'threads':>9}")
     print(f"{'quartz fp32':<34}{q_fp32:>8.1f}{pc:>9}")
     print(f"{'quartz hybrid (int8 lm_head)':<34}{q_hyb:>8.1f}{pc:>9}")
+    print(f"{'quartz fused int8 body':<34}{q_fused:>8.1f}{pc:>9}")
 
     binp = shutil.which("llama-bench") or "/opt/homebrew/bin/llama-bench"
     if not (shutil.which("llama-bench") or os.path.exists(binp)):
@@ -88,10 +92,10 @@ def main():
         print(f"{'llama.cpp Q4_K_M (CPU, best -t)':<34}{v:>8.1f}{t:>9}  (4-bit, context)")
 
     if llama_q8:
-        print(f"\nquartz hybrid is {q_hyb / llama_q8:.2f}x llama.cpp Q8_0 CPU "
-              f"(llama.cpp is {llama_q8 / q_hyb:.1f}x faster) — the transparency tax: "
-              f"quartz's fp32 body is bandwidth-competitive but moves more bytes, and the "
-              f"per-op overhead floor blocks an efficient all-int8 body (see results-cpu.md).")
+        print(f"\nquartz best ({q_best:.0f} tok/s) is {q_best / llama_q8:.2f}x llama.cpp Q8_0 CPU "
+              f"(llama.cpp is {llama_q8 / q_best:.1f}x faster). The fused int8 body narrows the "
+              f"gap but numba int8 caps ~25-37 GB/s vs llama's hand-tuned NEON 74 — the residual "
+              f"transparency tax (see docs/results-cross-engine.md).")
 
 
 if __name__ == "__main__":

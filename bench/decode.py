@@ -44,6 +44,7 @@ CONFIGS = {
     "fp32": (None, dict()),
     "hybrid (int8 lm_head)": (QuantConfig(), dict(int8_lm_head=True)),
     "int8 everywhere": (QuantConfig(default="int8"), dict(int8=True, int8_lm_head=True)),
+    "fused int8 body": (QuantConfig(default="int8", fused=True), dict(int8=True, int8_lm_head=True)),
 }
 
 

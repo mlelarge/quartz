@@ -7,10 +7,12 @@ transparent, single-stream design; the bottleneck and the levers move.
 > **Status: M0–M2 + M4 done.** Dense Qwen3 + Llama decode in fp32 (parity-exact vs an
 > independent HuggingFace fp32 oracle, cosine 1.000000); the fused int8 kernel +
 > size-adaptive hybrid dispatcher (**4.25×** on the lm_head, ~1.2× end-to-end, int8 PPL
-> cost +0.1%); a measured figure-of-merit; and an external yardstick vs `llama.cpp` CPU
-> (quartz is **bandwidth-competitive (~74 GB/s, == llama.cpp)** but **~3.1× slower**,
-> entirely from moving more bytes). See **[results-cross-engine.md](docs/results-cross-engine.md)**,
-> **[results-cpu.md](docs/results-cpu.md)**, and **[results-int8-quality.md](docs/results-int8-quality.md)**.
+> cost +0.1%); a measured figure-of-merit; an external yardstick vs `llama.cpp` CPU
+> (quartz is **bandwidth-competitive (~74 GB/s, == llama.cpp)** but **~3× slower**, from
+> moving more bytes); and a **fused int8-body kernel** making all-int8 the fastest config
+> (**1.17× over hybrid, 1.43× over fp32**), to the numba ceiling. See
+> **[results-fused.md](docs/results-fused.md)**, **[results-cross-engine.md](docs/results-cross-engine.md)**,
+> **[results-cpu.md](docs/results-cpu.md)**, **[results-int8-quality.md](docs/results-int8-quality.md)**.
 
 ## The thesis
 

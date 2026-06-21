@@ -100,6 +100,10 @@ class QuantConfig:
                                            # (a near-free quality win: worst logit cos
                                            # 0.99998 vs 0.99997 per-row on Qwen3-0.6B)
     kernel: str = "auto"                  # "auto" | "w8a32" | "w8a8"
+    # Fuse each layer's MLP (gate+up+silu+down) into one njit call for decode — the
+    # M4 fix for the dispatch-bound int8 body. Requires default="int8" (the whole body
+    # must be int8). Opt-in; the per-op MLP stays the readable parity reference.
+    fused: bool = False
 
     def __post_init__(self) -> None:
         if self.bits != 8:
@@ -108,6 +112,8 @@ class QuantConfig:
             raise ValueError(f"unsupported group_size={self.group_size}")
         if self.kernel not in ("auto", "w8a32", "w8a8"):
             raise ValueError(f"unsupported kernel={self.kernel}")
+        if self.fused and self.default != "int8":
+            raise ValueError("fused=True requires default='int8' (the whole body must be int8)")
 
 
 @dataclass(frozen=True)

@@ -16,8 +16,9 @@ from __future__ import annotations
 import numpy as np
 
 from .config import QuantConfig
-from .ops import Linear, Embedding
+from .ops import Linear, Embedding, silu
 from .kernels.int8 import matmul_int8, warmup
+from .kernels.fused import fused_mlp_decode, warmup_fused
 from .kernels.platform import configure_threads
 from .weights import set_module, _walk_leaves
 
@@ -82,6 +83,46 @@ class QuantizedEmbedding:
         return matmul_int8(self.q, self.scale, x)
 
 
+class FusedMLP:
+    """Fused int8 drop-in for the per-op MLP (gate/up/down all int8). Decode (M=1)
+    runs the single-call fused kernel; prefill (M>1) falls back to the per-op int8
+    path. Same `__call__(x)` signature as ops/MLP, so DecoderLayer is untouched. The
+    readable per-op MLP stays the parity reference (tests assert fused == per-op)."""
+
+    def __init__(self, gate: QuantizedLinear, up: QuantizedLinear, down: QuantizedLinear):
+        # stack gate|up rows -> one (2*INTER, H) tensor so a bigger prange amortizes
+        # the thread-launch (gate alone 21 GB/s, stacked gate+up 37 GB/s).
+        self.gu_q = np.ascontiguousarray(np.concatenate([gate.q, up.q], axis=0))
+        self.gu_s = np.ascontiguousarray(np.concatenate([gate.scale, up.scale], axis=0))
+        self.down_q = down.q
+        self.down_s = down.scale
+        self.inter = gate.q.shape[0]
+        self.hidden = gate.q.shape[1]
+
+    def __call__(self, x):
+        m = 1
+        for d in x.shape[:-1]:
+            m *= d
+        if m == 1:                                    # decode: one fused njit call
+            xf = np.ascontiguousarray(x.reshape(self.hidden), dtype=np.float32)
+            abuf = np.empty(self.inter, np.float32)
+            out = np.empty(self.hidden, np.float32)
+            fused_mlp_decode(self.gu_q, self.gu_s, xf, self.down_q, self.down_s, abuf, out)
+            return out.reshape(x.shape)
+        # prefill (M>1): stacked gate|up GEMM -> split -> silu*up -> down
+        gu = matmul_int8(self.gu_q, self.gu_s, x)     # (..., 2*INTER)
+        return matmul_int8(self.down_q, self.down_s, silu(gu[..., :self.inter]) * gu[..., self.inter:])
+
+
+def _fuse_mlps(net) -> None:
+    """Replace each layer's per-op MLP with a FusedMLP (requires int8 gate/up/down)."""
+    for layer in net.layers:
+        g, u, d = layer.mlp.gate_proj, layer.mlp.up_proj, layer.mlp.down_proj
+        if not all(isinstance(p, QuantizedLinear) for p in (g, u, d)):
+            raise ValueError("fused MLP requires int8 gate/up/down (use default='int8')")
+        layer.mlp = FusedMLP(g, u, d)
+
+
 def _wants_int8(name: str, qcfg: QuantConfig) -> bool:
     if any(name.endswith(s) for s in qcfg.exclude):
         return False
@@ -122,4 +163,7 @@ def quantize_model(net, qcfg: QuantConfig, *, verbose: bool = False):
         print(f"[quartz] int8 skipped (group_size): {skipped}")
     configure_threads()                       # pin numba to performance cores (avoid E-core collapse)
     warmup()                                  # JIT the kernels once, off the hot path
+    if getattr(qcfg, "fused", False):
+        _fuse_mlps(net)                       # M4: fuse the dispatch-bound int8 MLP
+        warmup_fused()
     return net
