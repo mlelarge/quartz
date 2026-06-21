@@ -1,0 +1,52 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "quartz-llm"
+version = "0.0.0"
+description = "A transparent, portable CPU LLM inference engine (numpy + Numba)"
+readme = "README.md"
+requires-python = ">=3.10"   # M0 is pure numpy; the [kernels] extra adds numba (M1)
+license = { text = "MIT" }
+authors = [{ name = "Marc Lelarge" }]
+keywords = ["llm", "inference", "cpu", "numpy", "numba", "quantization", "int8", "qwen"]
+
+# M0 is genuinely pure numpy (fp32). numba is NOT a core dep — it lands with the
+# fused int8 kernels (M1) via the optional [kernels] extra, so M0 installs stay
+# numpy-only and unconstrained by numba's CPython support window.
+dependencies = [
+    "numpy>=1.24,<3",
+    "safetensors>=0.4",     # checkpoint format
+    "transformers>=4.51",   # tokenizer + Qwen3 ChatML chat template (NOT torch)
+    "huggingface_hub>=0.24",
+]
+
+[project.optional-dependencies]
+# Fused int8 GEMV/GEMM kernels (M1). Pulls numba (caps CPython to its support window).
+kernels = ["numba>=0.61", "threadpoolctl>=3.2"]
+# Independent (non-circular) fp32 CPU oracle for parity: HF transformers + torch.
+reference = ["torch>=2.2", "transformers>=4.51"]
+dev = ["pytest>=8.0", "ruff>=0.6", "threadpoolctl>=3.2"]
+
+[project.scripts]
+quartz-generate = "quartz.generate:main"
+
+[tool.setuptools]
+packages = ["quartz", "quartz.kernels", "quartz.models", "bench"]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+addopts = "-q"
+markers = [
+    "oracle: requires torch + transformers + a checkpoint (HF fp32 parity gate)",
+    "slow: longer-running perf/quality sweeps",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint.per-file-ignores]
+# tests importorskip heavy deps before importing them, so imports follow guards.
+"tests/*" = ["E402"]

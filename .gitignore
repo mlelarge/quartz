@@ -1,0 +1,21 @@
+# Byte-compiled / caches
+__pycache__/
+*.py[cod]
+.ruff_cache/
+.pytest_cache/
+*.egg-info/
+
+# Environments
+.venv/
+venv/
+
+# Numba JIT cache
+.numba_cache/
+
+# Local model weights / checkpoints — never commit (root-anchored, per the
+# silica lesson: an un-anchored `models/` would also ignore the source package).
+/models/
+/checkpoints/
+
+# OS
+.DS_Store

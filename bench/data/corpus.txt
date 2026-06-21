@@ -1,0 +1,28 @@
+Large language models predict the next token in a sequence, one step at a time.
+At inference, the dominant cost is not arithmetic but memory: every generated token
+must read the entire set of model weights from memory, so the speed of generation is
+bounded by how fast those weights can be streamed. This is why quantization matters.
+By storing each weight in eight bits instead of thirty-two, a model reads four times
+fewer bytes per token, and on a bandwidth-bound machine that translates almost directly
+into faster generation.
+
+On a graphics processor the picture is clean. The chip has enormous memory bandwidth,
+the matrix multiplications are launched as a handful of large kernels, and the engine
+spends most of its time waiting on memory. Quantizing the weights shrinks the amount of
+memory traffic and the model runs faster. The lever is obvious and the gains are large.
+
+On a central processor the same idea must be earned. General matrix routines are already
+highly tuned, and for the small projections inside a single decoder layer they run almost
+entirely from cache, where reading fewer bytes buys nothing. A naive attempt to quantize
+everything is slower than doing nothing, because the dequantization step materializes a
+full floating point copy of the weights, paying back twice what it hoped to save.
+
+The trick is to fuse. A kernel that reads the packed integer weights and reconstructs each
+value inside a register, never writing a floating point array to memory, recovers the
+bandwidth advantage exactly where it exists: in the one enormous projection from the hidden
+state to the vocabulary, which is far too large to live in cache. There, and only there,
+the fused integer path is several times faster, and the rest of the network is left alone.
+
+The lesson generalizes. A transparent engine is not a slow one. It is one whose every cost
+is visible, measured, and placed where the evidence says it belongs, so that each
+optimization is applied precisely where it pays and nowhere that it does not.
